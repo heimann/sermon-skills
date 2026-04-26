@@ -122,7 +122,12 @@ Response shape:
           "threads": 1
         }
       ],
-      "disks": []
+      "disks": [],
+      "log_stats": {
+        "seen": 87,
+        "uploaded": 20,
+        "dropped": 67
+      }
     }
   ]
 }
@@ -185,7 +190,7 @@ Response shape:
 }
 ```
 
-Logs are returned newest-to-oldest. Hosted log upload is not historical backfill: the daemon follows journald from its start time and uploads capped recent batches as it samples.
+Logs are returned newest-to-oldest. Hosted log upload is not historical backfill: the daemon follows journald from its start time and uploads sampled recent batches as it samples. Hosted upload is intentionally a sketch, not full log retention. Current daemon releases prefer warnings/errors first and cap hosted upload at 20 log lines per ingest; local DuckDB remains the fuller source of truth.
 
 ### Log facets for one server
 
@@ -201,6 +206,12 @@ Response shape:
 ```json
 {
   "server_id": "uuid",
+  "coverage": {
+    "total": 801,
+    "oldest_collected_at": "2026-04-26T23:18:59Z",
+    "newest_collected_at": "2026-04-26T23:23:19Z",
+    "retention_seconds": 259200
+  },
   "sources": [{"value": "systemd", "count": 100}],
   "units": [{"value": "tailscaled", "count": 42}],
   "identifiers": [{"value": "tailscaled", "count": 42}],
@@ -227,8 +238,10 @@ Process snapshots are intentionally narrow:
 6. If you do not know the right service/unit value, call `/logs/facets` first and inspect observed `units`, `identifiers`, `systemd_units`, and `priorities`.
 7. For service-specific log questions, use `service=<name>` first. If no rows return, retry with exact observed `identifier` or `systemd_unit` from facets.
 8. For metric/log correlation, use metric sample timestamps to set `since` and `until` around the interesting window.
-9. Ground every conclusion in returned fields. Include timestamps, sample counts, log counts, and any filters used.
-10. State API limits explicitly when relevant: alerts and posture are not available through this API yet; hosted logs are recent/capped and not full journal search.
+9. Use `coverage` from `/logs/facets` to state the hosted log coverage window. If the incident predates `oldest_collected_at`, say hosted logs cannot answer it and suggest host-local journald for that exact window.
+10. Use metric `log_stats` to say when hosted logs are sampled/incomplete. If `dropped > 0`, explicitly say hosted logs are partial.
+11. Ground every conclusion in returned fields. Include timestamps, sample counts, log counts, and any filters used.
+12. State API limits explicitly when relevant: alerts and posture are not available through this API yet; hosted logs are recent/sampled/capped and not full journal search.
 
 ## How to reason about the data
 
@@ -252,8 +265,11 @@ Process snapshots are intentionally narrow:
   - `unit` is a compatibility grouping key: identifier first, otherwise systemd unit.
   - `priority` follows syslog severity: `0` emerg, `1` alert, `2` crit, `3` err, `4` warning, `5` notice, `6` info, `7` debug. Lower is more severe.
   - Start with facets or broad recent logs, then narrow with `priority`, `service`, `identifier`, `systemd_unit`, and time bounds.
+  - Prefer summaries over raw rows: group by priority and identifier/systemd unit, then show at most 5-10 representative lines unless the user asks for raw JSON.
+  - Do not dump full JSON responses into the answer by default. Use JSON internally as evidence, then format it for the human.
   - Do not claim absence of an event from a small window as proof it never happened. Say "not present in the recent hosted log window."
   - Messages are capped/truncated by Sermon, so very long log lines may be incomplete.
+  - Hosted logs are sampled under volume. If `log_stats.dropped > 0`, say the hosted log slice is incomplete and suggest SSH/local DuckDB if the user needs exhaustive logs.
 - For daemon version questions:
   - Use `daemon_version`, `latest_daemon_version`, and `daemon_outdated` from `/fleet`.
   - If `daemon_outdated` is true, say the web UI can provide a copyable update command; do not invent remote update execution.
