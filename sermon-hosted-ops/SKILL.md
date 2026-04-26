@@ -7,7 +7,7 @@ description: Use this skill whenever the user asks an AI agent to inspect Sermon
 
 Use Sermon's hosted read API to answer operational questions from account-scoped fleet and metric data.
 
-The current API is intentionally narrow and read-only. It can answer questions about enrolled servers, online/stale state, latest CPU/memory, recent metric windows, disks, and process snapshots included in metric samples. It cannot yet answer hosted log, alert, posture, SSH, firewall, deploy, or package-update questions unless the user provides that data separately.
+The current API is intentionally narrow and read-only. It can answer questions about enrolled servers, online/stale state, latest CPU/memory, recent metric windows, disks, process snapshots included in metric samples, and recent hosted logs. It cannot yet answer alert, posture, SSH, firewall, deploy, or package-update questions unless the user provides that data separately.
 
 ## Inputs you need
 
@@ -76,7 +76,10 @@ Response shape:
       "cpu_percent": 12.3,
       "mem_percent": 64.2,
       "mem_used": 1234567890,
-      "mem_total": 8589934592
+      "mem_total": 8589934592,
+      "daemon_version": "v0.0.1-rc4",
+      "latest_daemon_version": "v0.0.1-rc4",
+      "daemon_outdated": false
     }
   ]
 }
@@ -127,6 +130,52 @@ Response shape:
 
 Samples are returned oldest-to-newest.
 
+### Recent logs for one server
+
+```bash
+curl -fsSL "$SERMON_URL/api/agent/servers/$SERVER_ID/logs?limit=100" \
+  -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
+```
+
+Optional filters:
+
+- `limit`: number of recent log entries, default 60, max 500.
+- `priority`: syslog severity threshold. Names work: `emerg`, `alert`, `crit`, `critical`, `err`, `error`, `warning`, `warn`, `notice`, `info`, `debug`. `priority=warning` returns warning and more severe entries (`0..4`).
+- `unit`: exact match on Sermon's current log unit field. Today this is usually `SYSLOG_IDENTIFIER` when present, falling back to `_SYSTEMD_UNIT`. So values may look like `tailscaled`, `sshd`, `sermon-agent`, or `ssh.service` depending on the journal entry.
+
+Examples:
+
+```bash
+# Warnings and errors across the server
+curl -fsSL "$SERMON_URL/api/agent/servers/$SERVER_ID/logs?limit=100&priority=warning" \
+  -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
+
+# Logs for a known unit/identifier
+curl -fsSL "$SERMON_URL/api/agent/servers/$SERVER_ID/logs?limit=100&unit=tailscaled" \
+  -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
+```
+
+Response shape:
+
+```json
+{
+  "server_id": "uuid",
+  "logs": [
+    {
+      "id": "uuid",
+      "collected_at": "2026-04-26T22:51:20Z",
+      "source": "systemd",
+      "unit": "sermon-dogfood-test",
+      "priority": 5,
+      "pid": 1234,
+      "message": "sermon hosted log smoke after journal wrapper"
+    }
+  ]
+}
+```
+
+Logs are returned newest-to-oldest. Hosted log upload is not historical backfill: the daemon follows journald from its start time and uploads capped recent batches as it samples.
+
 Process snapshots are intentionally narrow:
 
 - Use `name`, not `cmd`, as the process label.
@@ -141,8 +190,10 @@ Process snapshots are intentionally narrow:
 2. Match servers by exact `name`; if the user gives a fuzzy name, list candidates and pick the obvious one only when unambiguous.
 3. For fleet-health questions, summarize all servers from `/fleet` and stop unless a server looks stale or the user asks for details.
 4. For a specific server, fetch recent metrics with `limit=60` unless the user asks for a different window.
-5. Ground every conclusion in returned fields. Include timestamps and sample counts.
-6. State API limits explicitly when relevant: hosted logs, alerts, and posture are not available through this API yet.
+5. If the user asks about logs, errors, crashes, failed services, auth/SSH events, or "why" something happened, fetch recent logs with `limit=100`. Add `priority=warning` when looking for problems.
+6. For service-specific log questions, first try the service/identifier the user named. If no rows return, fetch unfiltered recent logs and inspect observed `unit` values before retrying, because Sermon's current `unit` field may be a syslog identifier rather than a `.service` name.
+7. Ground every conclusion in returned fields. Include timestamps, sample counts, and log counts.
+8. State API limits explicitly when relevant: alerts and posture are not available through this API yet; hosted logs are recent/capped and not full journal search.
 
 ## How to reason about the data
 
@@ -159,6 +210,16 @@ Process snapshots are intentionally narrow:
   - Sort top memory by `mem_rss` descending, not by a missing `mem_percent` field.
   - Show `name`, `pid`, `username`, `cpu_percent`, and memory as MiB.
   - If the user asks for exact command lines, say hosted Sermon omits them for secret-safety; suggest SSH `ps` only if they want host-local follow-up.
+- For log questions:
+  - `source` is currently `systemd` for journald entries.
+  - `unit` is the best current grouping field, but it may be a syslog identifier (`tailscaled`) instead of a systemd unit (`tailscaled.service`). Show the observed values rather than assuming.
+  - `priority` follows syslog severity: `0` emerg, `1` alert, `2` crit, `3` err, `4` warning, `5` notice, `6` info, `7` debug. Lower is more severe.
+  - Start broad (`limit=100`) when investigating, then narrow with `priority` and `unit`.
+  - Do not claim absence of an event from a small window as proof it never happened. Say "not present in the recent hosted log window."
+  - Messages are capped/truncated by Sermon, so very long log lines may be incomplete.
+- For daemon version questions:
+  - Use `daemon_version`, `latest_daemon_version`, and `daemon_outdated` from `/fleet`.
+  - If `daemon_outdated` is true, say the web UI can provide a copyable update command; do not invent remote update execution.
 
 ## Charting
 
@@ -230,6 +291,11 @@ For a single-server question:
 
 ## Read
 <short evidence-backed interpretation>
+
+## Recent logs
+- Window: <log count> entries, newest first
+- Notable units: <unit counts or examples>
+- Warnings/errors: <summary with timestamps>
 
 ## Next
 <one useful follow-up>

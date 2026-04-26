@@ -4,7 +4,7 @@ Agent skills for using Sermon.
 
 ## Skills
 
-- `sermon-hosted-ops` - inspect Sermon-hosted fleet health and recent host metrics through `sermon.fyi`.
+- `sermon-hosted-ops` - inspect Sermon-hosted fleet health, recent host metrics, process snapshots, daemon version status, and recent hosted logs through `sermon.fyi`.
 
 ## Install with npx skills
 
