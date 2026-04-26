@@ -108,7 +108,17 @@ Response shape:
       "mem_percent": 64.2,
       "swap_total": 0,
       "swap_used": 0,
-      "processes": [],
+      "processes": [
+        {
+          "pid": 97589,
+          "name": "sermon-agent",
+          "username": "dmeh",
+          "state": "R",
+          "cpu_percent": 3.7,
+          "mem_rss": 45596672,
+          "threads": 1
+        }
+      ],
       "disks": []
     }
   ]
@@ -116,6 +126,14 @@ Response shape:
 ```
 
 Samples are returned oldest-to-newest.
+
+Process snapshots are intentionally narrow:
+
+- Use `name`, not `cmd`, as the process label.
+- Use `username`, not `user`, for ownership.
+- Use `mem_rss` bytes for process memory; there is no per-process `mem_percent` field.
+- `cmdline` is intentionally omitted from hosted ingest because command lines can contain secrets.
+- To display memory, convert `mem_rss` to MiB/GiB. Do not print `mem=0.00%` unless you calculated it against host memory yourself.
 
 ## Workflow
 
@@ -136,6 +154,11 @@ Samples are returned oldest-to-newest.
   - Do not invent averages unless you calculate them from the samples.
   - If only one or two samples exist, say the window is too small for trend claims.
   - Disk and process data are per-sample snapshots; use them as clues, not proof of causality.
+- For process questions:
+  - Sort top CPU by `cpu_percent` descending.
+  - Sort top memory by `mem_rss` descending, not by a missing `mem_percent` field.
+  - Show `name`, `pid`, `username`, `cpu_percent`, and memory as MiB.
+  - If the user asks for exact command lines, say hosted Sermon omits them for secret-safety; suggest SSH `ps` only if they want host-local follow-up.
 
 ## Response style
 
