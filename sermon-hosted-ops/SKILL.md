@@ -160,6 +160,45 @@ Process snapshots are intentionally narrow:
   - Show `name`, `pid`, `username`, `cpu_percent`, and memory as MiB.
   - If the user asks for exact command lines, say hosted Sermon omits them for secret-safety; suggest SSH `ps` only if they want host-local follow-up.
 
+## Charting
+
+When the user asks for a graph, chart, trend, spike, baseline, or "what changed over time", fetch recent metrics and render a terminal chart. Prefer ASCII/terminal output because the operator is already in an agent session.
+
+Use these defaults:
+
+- CPU chart: `collected_at` vs `cpu_percent`.
+- Memory chart: `collected_at` vs `mem_percent`.
+- Window: `limit=60` unless the user asks otherwise.
+- Include sample count, first timestamp, last timestamp, and timezone in the caption.
+- Treat API timestamps as UTC. If you display local clock labels, say so.
+- If one spike dominates the y-axis and hides baseline variation, offer or render a second zoomed chart excluding the spike.
+- If only one or two samples exist, do not chart; say there is not enough data.
+
+A good terminal chart path is `plotext` when available:
+
+```bash
+uv run --quiet --with plotext python <<'PY'
+import json
+from datetime import datetime
+import plotext as plt
+
+# Load JSON from a saved API response or stdin.
+d = json.load(open('/tmp/sermon-metrics.json'))
+samples = d['samples']
+times = [datetime.fromisoformat(s['collected_at'].replace('Z', '+00:00')) for s in samples]
+cpu = [s['cpu_percent'] for s in samples]
+
+plt.plot([t.strftime('%H:%M:%S') for t in times], cpu, marker='braille')
+plt.title('CPU%')
+plt.ylim(0, max(cpu) * 1.1 if cpu else 1)
+plt.plotsize(90, 22)
+plt.theme('clear')
+plt.show()
+PY
+```
+
+Do not let the chart replace the interpretation. After the chart, summarize whether the shape is steady, spiky, rising, falling, or too sparse to call.
+
 ## Response style
 
 Prefer this structure:
