@@ -140,8 +140,13 @@ curl -fsSL "$SERMON_URL/api/agent/servers/$SERVER_ID/logs?limit=100" \
 Optional filters:
 
 - `limit`: number of recent log entries, default 60, max 500.
+- `since`: ISO timestamp or Unix seconds; lower bound on `collected_at`.
+- `until`: ISO timestamp or Unix seconds; upper bound on `collected_at`.
 - `priority`: syslog severity threshold. Names work: `emerg`, `alert`, `crit`, `critical`, `err`, `error`, `warning`, `warn`, `notice`, `info`, `debug`. `priority=warning` returns warning and more severe entries (`0..4`).
-- `unit`: exact match on Sermon's current log unit field. Today this is usually `SYSLOG_IDENTIFIER` when present, falling back to `_SYSTEMD_UNIT`. So values may look like `tailscaled`, `sshd`, `sermon-agent`, or `ssh.service` depending on the journal entry.
+- `unit`: compatibility grouping key. New daemon versions set this to `identifier` when present, otherwise `systemd_unit`.
+- `identifier`: exact `SYSLOG_IDENTIFIER` match, e.g. `tailscaled`, `sshd`, `sermon-agent`.
+- `systemd_unit`: exact `_SYSTEMD_UNIT` match, e.g. `tailscaled.service`, `ssh.service`.
+- `service`: convenience alias matching any of `unit`, `identifier`, or `systemd_unit`.
 
 Examples:
 
@@ -150,8 +155,12 @@ Examples:
 curl -fsSL "$SERMON_URL/api/agent/servers/$SERVER_ID/logs?limit=100&priority=warning" \
   -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
 
-# Logs for a known unit/identifier
-curl -fsSL "$SERMON_URL/api/agent/servers/$SERVER_ID/logs?limit=100&unit=tailscaled" \
+# Logs for a known service-ish value
+curl -fsSL "$SERMON_URL/api/agent/servers/$SERVER_ID/logs?limit=100&service=tailscaled" \
+  -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
+
+# Logs in the same UTC time window as a metric spike
+curl -fsSL "$SERMON_URL/api/agent/servers/$SERVER_ID/logs?since=2026-04-26T22:00:00Z&until=2026-04-26T22:15:00Z&limit=200" \
   -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
 ```
 
@@ -166,6 +175,8 @@ Response shape:
       "collected_at": "2026-04-26T22:51:20Z",
       "source": "systemd",
       "unit": "sermon-dogfood-test",
+      "identifier": "sermon-dogfood-test",
+      "systemd_unit": null,
       "priority": 5,
       "pid": 1234,
       "message": "sermon hosted log smoke after journal wrapper"
@@ -175,6 +186,28 @@ Response shape:
 ```
 
 Logs are returned newest-to-oldest. Hosted log upload is not historical backfill: the daemon follows journald from its start time and uploads capped recent batches as it samples.
+
+### Log facets for one server
+
+Use facets before narrowing when you do not know the right service/unit name:
+
+```bash
+curl -fsSL "$SERMON_URL/api/agent/servers/$SERVER_ID/logs/facets?since=2026-04-26T22:00:00Z" \
+  -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
+```
+
+Response shape:
+
+```json
+{
+  "server_id": "uuid",
+  "sources": [{"value": "systemd", "count": 100}],
+  "units": [{"value": "tailscaled", "count": 42}],
+  "identifiers": [{"value": "tailscaled", "count": 42}],
+  "systemd_units": [{"value": "tailscaled.service", "count": 42}],
+  "priorities": [{"priority": 4, "count": 3}]
+}
+```
 
 Process snapshots are intentionally narrow:
 
@@ -191,9 +224,11 @@ Process snapshots are intentionally narrow:
 3. For fleet-health questions, summarize all servers from `/fleet` and stop unless a server looks stale or the user asks for details.
 4. For a specific server, fetch recent metrics with `limit=60` unless the user asks for a different window.
 5. If the user asks about logs, errors, crashes, failed services, auth/SSH events, or "why" something happened, fetch recent logs with `limit=100`. Add `priority=warning` when looking for problems.
-6. For service-specific log questions, first try the service/identifier the user named. If no rows return, fetch unfiltered recent logs and inspect observed `unit` values before retrying, because Sermon's current `unit` field may be a syslog identifier rather than a `.service` name.
-7. Ground every conclusion in returned fields. Include timestamps, sample counts, and log counts.
-8. State API limits explicitly when relevant: alerts and posture are not available through this API yet; hosted logs are recent/capped and not full journal search.
+6. If you do not know the right service/unit value, call `/logs/facets` first and inspect observed `units`, `identifiers`, `systemd_units`, and `priorities`.
+7. For service-specific log questions, use `service=<name>` first. If no rows return, retry with exact observed `identifier` or `systemd_unit` from facets.
+8. For metric/log correlation, use metric sample timestamps to set `since` and `until` around the interesting window.
+9. Ground every conclusion in returned fields. Include timestamps, sample counts, log counts, and any filters used.
+10. State API limits explicitly when relevant: alerts and posture are not available through this API yet; hosted logs are recent/capped and not full journal search.
 
 ## How to reason about the data
 
@@ -212,9 +247,11 @@ Process snapshots are intentionally narrow:
   - If the user asks for exact command lines, say hosted Sermon omits them for secret-safety; suggest SSH `ps` only if they want host-local follow-up.
 - For log questions:
   - `source` is currently `systemd` for journald entries.
-  - `unit` is the best current grouping field, but it may be a syslog identifier (`tailscaled`) instead of a systemd unit (`tailscaled.service`). Show the observed values rather than assuming.
+  - `identifier` comes from journald `SYSLOG_IDENTIFIER`.
+  - `systemd_unit` comes from journald `_SYSTEMD_UNIT`.
+  - `unit` is a compatibility grouping key: identifier first, otherwise systemd unit.
   - `priority` follows syslog severity: `0` emerg, `1` alert, `2` crit, `3` err, `4` warning, `5` notice, `6` info, `7` debug. Lower is more severe.
-  - Start broad (`limit=100`) when investigating, then narrow with `priority` and `unit`.
+  - Start with facets or broad recent logs, then narrow with `priority`, `service`, `identifier`, `systemd_unit`, and time bounds.
   - Do not claim absence of an event from a small window as proof it never happened. Say "not present in the recent hosted log window."
   - Messages are capped/truncated by Sermon, so very long log lines may be incomplete.
 - For daemon version questions:
