@@ -22,7 +22,7 @@ downloaded content.
 - `current`: continue with this file.
 - `refreshed`: this file is stale. Follow the canonical skill it printed for
   this session instead of this file, and tell the user they can reinstall.
-- `freshness-unverified` or `integrity-mismatch`: continue with this file,
+- `freshness-unverified`, `integrity-mismatch`, or `error`: continue with this file,
   tell the user its freshness is unverified, and do not conclude that Sermon
   lacks a capability from this file alone. Check the live MCP tool list first.
 
