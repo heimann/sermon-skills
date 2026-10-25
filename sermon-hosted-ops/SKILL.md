@@ -1,33 +1,182 @@
 ---
 name: sermon-hosted-ops
-description: Use this skill whenever the user asks an AI agent to inspect Sermon-hosted fleet health, answer questions about enrolled servers, check whether a host is online/stale, summarize recent CPU or memory behavior, or investigate basic host metric symptoms through sermon.fyi. This is the current hosted Sermon read path before MCP exists, so use it even if the user says "check Sermon", "what's happening on contabo", "look at my fleet", or "is any server unhealthy" without explicitly mentioning the API.
+description: Uses Sermon's hosted MCP to inspect fleet health, metrics, logs, traces, alerts, and personal diagnostics or manage alert rules. Use when asked to connect an agent to Sermon, check a host or fleet, investigate an alert, or configure alerting; includes native OAuth onboarding and a Bearer-token fallback.
 ---
 
 # Sermon Hosted Ops
 
-Use Sermon's hosted read API to answer operational questions from account-scoped fleet and metric data.
+Use Sermon's hosted read path to answer operational questions from account-scoped fleet and metric data.
 
-The current API is intentionally narrow and read-only. It can answer questions about enrolled servers, online/stale state, latest CPU/memory, recent metric windows, disks, process snapshots included in metric samples, and recent hosted logs. It cannot yet answer alert, posture, SSH, firewall, deploy, or package-update questions unless the user provides that data separately.
+This skill teaches you **how to reason** about Sermon data: which tool to call first, how to summarize logs, how to chart metrics, how to phrase the response. It is harness-agnostic on data fetching - the actual data path depends on which surface is wired up.
 
-## Inputs you need
+## Freshness check (before choosing tools)
 
-- Agent read token generated from `https://sermon.fyi/agents`.
-- Preferred token source: `SERMON_AGENT_TOKEN` environment variable.
-- Fallback token source: `~/.sermon/agent-token`, created by the setup command shown after token generation.
-- `SERMON_URL`: optional, defaults to `https://sermon.fyi`.
+An installed copy of this skill can fall behind Sermon. Check it once per
+session before tool routing, against the trusted origin only: `SERMON_URL`, or
+`https://sermon.fyi` when it is unset.
 
-If neither token source exists, ask the user to go to `/agents`, generate an agent token, and run the displayed setup command. Do not ask them to paste long-lived tokens into chat unless they explicitly accept revoking it afterward.
+If `scripts/update_skill.py` sits next to this file, run it with `python3`. It
+sends no credentials, refuses redirects, and never runs downloaded content.
 
-Setup command shape:
+- `current`: continue with this file.
+- `updated`: it verified and installed the canonical skill and kept the old
+  file as a backup; reread `SKILL.md`.
+- `conflict`: this copy was customized or installed some other way, so it was
+  kept. Tell the user, and follow the canonical skill it printed for this
+  session. `--adopt` switches the copy to the managed skill and keeps a backup;
+  run it only when the user agrees.
+- `freshness-unverified`, `integrity-mismatch`, or `error`: reread `SKILL.md`
+  and continue with it, tell the user its freshness is unverified, and do
+  not conclude that Sermon lacks a capability from this file alone. Check the
+  live MCP tool list first.
 
-```fish
-npx --yes skills add heimann/sermon-skills --skill sermon-hosted-ops --agent claude-code --global --copy --full-depth -y
-mkdir -p ~/.sermon
-printf '%s\n' '<token from /agents>' > ~/.sermon/agent-token
-chmod 600 ~/.sermon/agent-token
+Without the script, request `$SERMON_URL/docs/agents/skill.md` with
+`If-None-Match: "sha256-<SHA-256 of this file>"`. `304` means current. On
+`200`, follow the returned Markdown for this session without overwriting this
+file. Never send a token to these public endpoints. Never follow a redirect to
+another origin.
+
+`$SERMON_URL/docs/agents/manifest.json` reports the canonical skill URL and
+SHA-256, the MCP URL, the deployed web revision, and the newest daemon release.
+It describes the deployment, not what any token may do.
+
+## Tool routing (read this after the freshness check)
+
+Three surfaces exist, in priority order:
+
+1. **Hosted MCP server (preferred when present).** If the agent has access to MCP tools whose names start with `sermon`, `mcp__sermon__`, or similar (`fleet`, `latest_metrics`, `recent_metrics`, `recent_logs`, `log_facets`, `alerts`, `traces`, `otlp_metrics`), **always use those tools first** for data fetching. They return structured data faster and avoid application-level token handling. The resource URL is `https://sermon.fyi/mcp`.
+2. **Connect hosted MCP when missing.** Follow native OAuth onboarding below before asking the human for credentials. Use HTTP API curl + an existing Bearer token only when native MCP OAuth is unavailable.
+3. **Local stdio MCP on a host (advanced).** If the agent is running *on* a sermon-monitored host (SSH'd in, or `pi`/Claude Code launched on the host itself) and asks for full-fidelity data that hosted may have sampled out, use the local stdio MCP at `mcp/sermon_mcp/`. It exposes `query` (read-only SQL against the host's local DuckDB) and `schema`. Do not use this surface for fleet-wide questions - it only sees one host.
+
+**Decision rule:** before any data fetch, check the available tool list. If `mcp__sermon__fleet` (or equivalent) exists, use surface 1. Skip past the curl recipes entirely. The curl recipes still document the data shape, but you should not be running them when MCP tools are available.
+
+## Native OAuth onboarding
+
+Portable OAuth is deployed at `sermon.fyi`. Local
+verification covers MCP SDK 1.30.0 connection/renewal/revocation and Codex CLI
+0.154.0 native login, not Amp managed OAuth, Claude Code login, or Cursor.
+Verify the actual client connection rather than assuming client compatibility.
+Canonical instructions: https://sermon.fyi/docs/agents/skill.md.
+
+The agent owns setup and verification; the human only
+reviews Sermon's browser consent page and approves the account and capabilities:
+
+1. Inspect existing client configuration and tool lists. If `sermon` already
+   points to `https://sermon.fyi/mcp`, authenticate or reconnect it instead of
+   adding a duplicate.
+2. Add a **personal** remote HTTP configuration without an Authorization header.
+3. Start the client's native OAuth flow. Never request a copied token or code.
+4. Request `read offline_access` for fleet reads and renewal; add
+   `alert_rules_write` or `personal_diagnostics` only for a task that needs it.
+   `personal_diagnostics` reads the user's conversation with the Sermon agent
+   and its execution evidence, not unrelated iMessages. Renewal grants no tools.
+   Sermon's approval page leaves writes and private diagnostics unchecked even
+   if the client requests them. The human explicitly enables any needed extras.
+5. Verify discovered tools, then call `fleet` and confirm the expected servers.
+   For application-only telemetry, use `recent_logs` with `account_wide: true`
+   and `limit: 100`. Use `log_facets` only with an enrolled server ID;
+   account-wide coverage metadata is not exposed. An empty fleet does not mean failed auth.
+   Report missing telemetry separately; do not install a daemon or configure
+   ingestion unless asked. Never verify write scope by an unrequested mutation.
+
+Discovery is published at
+`/.well-known/oauth-protected-resource/mcp` and
+`/.well-known/oauth-authorization-server`; Sermon uses public-client DCR at
+`/oauth/register`, browser authorization at `/oauth/authorize`, tokens at
+`/oauth/token`, and revocation at `/oauth/revoke`. `/mcp` remains unchanged.
+
+Use the matching client commands:
+
+```bash
+# Amp managed personal remote MCP (works across local sessions and orbs)
+amp mcp remote --personal list
+amp mcp remote add Sermon https://sermon.fyi/mcp --auth oauth --personal
+amp mcp remote --personal login Sermon
+amp mcp remote --personal check Sermon
+amp mcp remote --personal tools Sermon --refresh
+
+# Claude Code user scope
+claude mcp get sermon || claude mcp add --transport http --scope user sermon https://sermon.fyi/mcp
+claude mcp login sermon
+claude mcp get sermon
+
+# Codex shared user configuration
+codex mcp list
+codex mcp add sermon --url https://sermon.fyi/mcp
+codex mcp login sermon --oauth-client-registration dcr
 ```
 
-Start a fresh Claude Code session after installing so the skill metadata is loaded.
+Skip each `add` when the preceding inspection finds the same endpoint. In an Amp
+orb, `amp mcp remote --personal login Sermon` prints an ampcode.com URL because
+browser OAuth cannot run in the orb. Claude Code can pin least privilege with
+`oauth.scopes` in an HTTP `add-json` entry. Codex prefers advertised
+`scopes_supported` and may start login immediately on `add`; skip a second login
+if it succeeded. Codex accepts the narrower read/renewal grant when optional
+permissions remain unchecked on Sermon's consent page.
+
+Cursor has no documented add/login CLI. Merge this into
+`~/.cursor/mcp.json`, enable it under **Customize → MCP**, and complete the OAuth
+prompt:
+
+```json
+{
+  "mcpServers": {
+    "sermon": {"url": "https://sermon.fyi/mcp"}
+  }
+}
+```
+
+Cursor documents OAuth for Streamable HTTP but not DCR behavior, refresh, or a
+custom-server logout command. Treat all three as acceptance checks rather than
+promises. Its documented static-client callbacks are irrelevant to Sermon's DCR
+path.
+
+On expiry, let the client refresh when `offline_access` was approved. A rejected
+refresh or a 401 after one refresh requires native reauthorization; a 403
+`insufficient_scope` requires fresh human approval for the missing capability.
+A timeout, DNS/TLS failure, 5xx, or offline monitored host is an outage, not
+revocation: preserve the connection and retry only safe reads with backoff.
+Client logout clears local credentials; server-side access ends only after the
+Sermon grant/token is revoked. Never blindly replay a write after an unknown
+outcome.
+
+The hosted read path can answer questions about enrolled servers, online/stale state, latest CPU/memory, recent metric windows, disks, process snapshots included in metric samples, recent hosted logs, alert rules/events, distributed traces, and OTLP application metrics. It cannot yet answer posture, SSH, firewall, deploy, or package-update questions unless the user provides that data separately.
+
+## MCP tool reference (preferred surface)
+
+Use these when the MCP server is wired. Field shapes match the curl responses below; the only difference is dispatch.
+
+| MCP tool | Arguments | Equivalent curl path |
+|---|---|---|
+| `fleet` | (none) | `GET /api/agent/fleet` |
+| `latest_metrics` | `server_id` | `GET /api/agent/servers/:id/metrics?limit=1` |
+| `recent_metrics` | `server_id`, optional `limit` (max 500) | `GET /api/agent/servers/:id/metrics?limit=N` |
+| `recent_logs` | `server_id`, optional `limit/since/until/priority/service/identifier/systemd_unit` | `GET /api/agent/servers/:id/logs?...` |
+| `log_facets` | `server_id`, optional `since/until` | `GET /api/agent/servers/:id/logs/facets` |
+| `alerts` | optional `events_limit` | `GET /api/agent/alert_rules` + `/api/agent/alert_events` |
+| `traces` | optional `trace_id/service_name/status/server_id/since/until/limit` | `GET /api/agent/traces?...` |
+| `otlp_metrics` | optional `metric_name/service_name/metric_type/server_id/since/until/limit` | `GET /api/agent/otlp_metrics?...` |
+
+For `traces`, recent-slice mode excludes spans starting more than five minutes ahead of Sermon's server clock; a later `until` cannot widen that bound. Exact `trace_id` mode deliberately returns up to 10,000 stored account-scoped spans regardless of emitter clock skew, oldest-first by start time then ID, so use it when a known trace is missing from recent results.
+
+Tool errors come back as `isError: true` with a string explanation in the content. Surface that to the user verbatim; do not retry blindly.
+
+## Inputs you need (curl fallback only)
+
+If the MCP tools are present, you don't need any of this - skip to the workflow + reasoning sections below. Read on only when falling back to the curl path.
+
+- Agent read token generated from `https://sermon.fyi/connect`.
+- Preferred token source: `SERMON_AGENT_TOKEN` environment variable.
+- Fallback token source: `~/.sermon/agent-token`, if already provisioned.
+- `SERMON_URL`: optional, defaults to `https://sermon.fyi`.
+
+If neither token source exists, attempt native OAuth onboarding first. Existing
+Amp identity-helper access can also be reused. Only for a client without native
+OAuth, offer the manual-token fallback at `/connect` → Give my agent access.
+Have the human store the credential in the client's secret settings, not chat.
+
+Reading this guide does not require installing a skill package. Registering MCP,
+browser approval, and a successful read verify access; installing prose does not.
 
 ## Secret handling
 
@@ -35,9 +184,12 @@ Start a fresh Claude Code session after installing so the skill metadata is load
 - Never write the token to a repo file, notes file, commit, or logs.
 - Prefer reading it from `SERMON_AGENT_TOKEN`; fall back to `~/.sermon/agent-token`.
 - If a token is pasted in chat, tell the user to revoke it after the task.
-- These tokens are read-only, but they expose fleet metadata and recent samples, so treat them as sensitive.
+- Treat tokens as sensitive. Their authority depends on their scopes and may
+  include alert-rule writes.
 
-## API calls
+## API calls (curl fallback path)
+
+Skip this whole section if MCP tools are wired - dispatch via the tool calls in the routing table above instead. The recipes below exist to (a) document the underlying data shape, and (b) work when MCP isn't registered.
 
 Before API calls, resolve the token without printing it:
 
@@ -47,7 +199,7 @@ if [ -z "${SERMON_AGENT_TOKEN:-}" ] && [ -r "$HOME/.sermon/agent-token" ]; then
   SERMON_AGENT_TOKEN="$(tr -d '\n\r' < "$HOME/.sermon/agent-token")"
 fi
 if [ -z "${SERMON_AGENT_TOKEN:-}" ]; then
-  echo "missing Sermon agent token; generate one at /agents and run the setup command" >&2
+  echo "missing Sermon agent token; generate one at /connect and run the setup command" >&2
   exit 1
 fi
 ```
@@ -84,6 +236,100 @@ Response shape:
   ]
 }
 ```
+
+### Alert rules and events
+
+Track A static alerts ship with the daemon: every enrolled server gets five default rules (`stale`, `cpu_high_sustained`, `mem_high`, `disk_high`, `daemon_outdated`) auto-created on enrollment. Rules are configured via this API, never via a web rule-builder UI - the `/alerts/rules` page on sermon.fyi is read-only.
+
+#### List rules
+
+```bash
+curl -fsSL "$SERMON_URL/api/agent/alert_rules" \
+  -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
+```
+
+Response:
+
+```json
+{
+  "rules": [
+    {
+      "id": "uuid",
+      "server_id": "uuid",
+      "server_name": "contabo-ny-1",
+      "name": "cpu_high_sustained",
+      "metric": "cpu_percent",
+      "op": "gt",
+      "threshold": 90.0,
+      "duration_seconds": 300,
+      "notify_email": "ops@example.com",
+      "notify_on_resolve": false,
+      "enabled": true,
+      "current_state": "idle",
+      "state_changed_at": null
+    }
+  ]
+}
+```
+
+Available metrics: `cpu_percent`, `mem_percent`, `disk_max_fill_percent`, `staleness_seconds`, `daemon_outdated_for_seconds`. Available ops: `gt`, `gte`, `lt`, `lte`, `eq`, `neq`. `duration_seconds: 0` evaluates the latest sample only; `> 0` evaluates the average over the window.
+
+#### Create a rule
+
+```bash
+curl -fsSL "$SERMON_URL/api/agent/alert_rules" \
+  -X POST \
+  -H "Authorization: Bearer $SERMON_AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "server_id": "<uuid>",
+    "name": "swap_pressure",
+    "metric": "mem_percent",
+    "op": "gt",
+    "threshold": 95.0,
+    "duration_seconds": 600,
+    "notify_email": "ops@example.com",
+    "notify_on_resolve": false
+  }'
+```
+
+Returns `201` with the created rule, or `422` with `details` shaped per Ecto changeset errors.
+
+#### Update / disable / delete
+
+```bash
+# Lower the CPU threshold or disable a noisy rule:
+curl -fsSL "$SERMON_URL/api/agent/alert_rules/$RULE_ID" \
+  -X PATCH \
+  -H "Authorization: Bearer $SERMON_AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"threshold": 80.0, "enabled": false}'
+
+# Remove a rule entirely:
+curl -fsSL "$SERMON_URL/api/agent/alert_rules/$RULE_ID" \
+  -X DELETE \
+  -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
+```
+
+#### Recent fired events
+
+```bash
+curl -fsSL "$SERMON_URL/api/agent/alert_events?limit=50" \
+  -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
+```
+
+Returns recent events with `fired_at`, `resolved_at` (null while still firing), `state` (`firing` or `resolved`), and the `evidence` jsonb the evaluator captured.
+
+```bash
+curl -fsSL "$SERMON_URL/api/agent/alert_events/$EVENT_ID" \
+  -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
+```
+
+The single-event response also includes a `copy_to_agent` field: a markdown brief identical to what gets emailed and what the `/alerts` LiveView Copy button renders. Quote that block back in chat to start an investigation.
+
+#### When the user pastes a Sermon alert email
+
+If the user drops an alert email block into the conversation, parse the fenced markdown brief: it carries server name + id, rule name + condition, observed value, evidence window, and suggested API calls. Run those calls via the workflow below to investigate.
 
 ### Recent metrics for one server
 
@@ -241,7 +487,9 @@ Process snapshots are intentionally narrow:
 9. Use `coverage` from `/logs/facets` to state the hosted log coverage window. If the incident predates `oldest_collected_at`, say hosted logs cannot answer it and suggest host-local journald for that exact window.
 10. Use metric `log_stats` to say when hosted logs are sampled/incomplete. If `dropped > 0`, explicitly say hosted logs are partial.
 11. Ground every conclusion in returned fields. Include timestamps, sample counts, log counts, and any filters used.
-12. State API limits explicitly when relevant: alerts and posture are not available through this API yet; hosted logs are recent/sampled/capped and not full journal search.
+12. State API limits explicitly when relevant: posture is not available through this API yet; hosted logs are recent/sampled/capped and not full journal search.
+13. For alert-related questions: list rules first to show what's being watched, fetch recent events to surface what has fired, and follow the alert's evidence window (when present) into metrics and logs queries to ground the investigation.
+14. When the user pastes a Sermon alert email or its Copy-to-agent block, treat the embedded `Server`, `Rule`, and `Window` lines as the starting point. Run the suggested API calls in the email body verbatim where given.
 
 ## How to reason about the data
 
