@@ -22,33 +22,25 @@ npx --yes skills add https://github.com/heimann/sermon-skills --skill sermon-hos
 
 ## Keeping an installed copy current
 
-The skill tells the agent to run `scripts/update_skill.py` before it chooses tools. The script asks the trusted Sermon origin (`SERMON_URL`, default `https://sermon.fyi`) whether the local `SKILL.md` matches the canonical bytes:
+Before it chooses tools, the agent runs `scripts/check_skill.py`. The script asks the trusted Sermon origin (`SERMON_URL`, default `https://sermon.fyi`) whether the local `SKILL.md` matches the canonical bytes:
 
 - A matching copy costs one bodiless `304` request.
-- A stale copy that the script installed and nobody edited is replaced, after the download matches both its ETag and the manifest hash. The previous file is kept as a `SKILL.md.previous-<hash>` backup. An edit saved before the swap makes the script keep that edit and replace nothing; a later write through an editor that still has the old file open lands in the backup.
-- An edited or separately installed copy is kept. The script prints the canonical skill for the agent to follow in that session.
-- When Sermon is unreachable, the agent keeps the cached copy and reports that its freshness is unverified.
+- A stale copy gets the canonical skill, checked against its SHA-256 `ETag`, for the agent to follow in that session.
+- When Sermon is unreachable or the download fails its check, the agent keeps the local copy and reports that its freshness is unverified.
 
-`managed.json` next to `SKILL.md` records the origin and hash the script installed. Delete it to stop automatic replacement. The script writes only inside the skill directory, and it refuses a directory path that passes through a symlink; pass the resolved path instead. It needs a POSIX system.
+The script never writes a file, so installed and customized copies stay as they are. To update the installed copy itself, reinstall with the `npx skills` command above.
 
-### One-time migration for copies installed before the freshness check
+### Copies installed before the freshness check
 
-Older copies have no freshness check. Some still state that Sermon has no alert API, which is wrong. Reinstall with the `npx skills` command above. To migrate an existing directory in place instead, run the updater from a fresh install against it:
-
-```fish
-python3 <fresh-install>/sermon-hosted-ops/scripts/update_skill.py --skill-dir <old-skill-dir> --adopt
-```
-
-`--adopt` saves the old file as `SKILL.md.previous-<hash>`, installs the verified canonical skill, and writes `managed.json`. It touches no other files.
+Reinstall any copy without `scripts/check_skill.py` once with the `npx skills` command above. Agents that read `https://sermon.fyi/docs/agents/skill.md` directly always get the current skill.
 
 ## Updating the mirror in `heimann/sermon-skills`
 
-Sync only after the `heimann/sermon` change that edits `SKILL.md` is deployed. A mirror ahead of `sermon.fyi` would make managed installs replace the newer skill with the older deployed one.
+Sync after the `heimann/sermon` change that edits `SKILL.md` is deployed, so new installs report `current`:
 
 1. Copy `SKILL.md` and `scripts/` from `docs/skills/sermon-hosted-ops/` into `sermon-hosted-ops/` in the mirror.
-2. From the mirror root, run `python3 sermon-hosted-ops/scripts/update_skill.py --skill-dir sermon-hosted-ops --check`. It must print `current`, which proves the mirror matches the deployed skill. Any other result means they differ; stop.
-3. Run the same command with `--adopt` instead of `--check`. It prints `current` again and writes `managed.json` with that hash, so new installs start managed.
-4. Commit `SKILL.md`, `scripts/`, and `managed.json` together.
+2. From the mirror root, run `python3 sermon-hosted-ops/scripts/check_skill.py --skill sermon-hosted-ops/SKILL.md`. It must print `current`; anything else means the mirror and the deployment differ.
+3. Commit `SKILL.md` and `scripts/` together.
 
 ## Connect to Sermon
 

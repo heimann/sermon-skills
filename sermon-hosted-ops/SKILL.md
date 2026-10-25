@@ -13,28 +13,27 @@ This skill teaches you **how to reason** about Sermon data: which tool to call f
 
 An installed copy of this skill can fall behind Sermon. Check it once per
 session before tool routing, against the trusted origin only: `SERMON_URL`, or
-`https://sermon.fyi` when it is unset.
+`https://sermon.fyi` when it is unset. The check never changes this file.
 
-If `scripts/update_skill.py` sits next to this file, run it with `python3`. It
-sends no credentials, refuses redirects, and never runs downloaded content.
+If `scripts/check_skill.py` sits next to this file, run it with `python3`. It
+sends no credentials, refuses redirects, writes no files, and never runs
+downloaded content.
 
 - `current`: continue with this file.
-- `updated`: it verified and installed the canonical skill and kept the old
-  file as a backup; reread `SKILL.md`.
-- `conflict`: this copy was customized or installed some other way, so it was
-  kept. Tell the user, and follow the canonical skill it printed for this
-  session. `--adopt` switches the copy to the managed skill and keeps a backup;
-  run it only when the user agrees.
-- `freshness-unverified`, `integrity-mismatch`, or `error`: reread `SKILL.md`
-  and continue with it, tell the user its freshness is unverified, and do
-  not conclude that Sermon lacks a capability from this file alone. Check the
-  live MCP tool list first.
+- `refreshed`: this file is stale. Follow the canonical skill it printed for
+  this session instead of this file, and tell the user they can reinstall.
+- `freshness-unverified` or `integrity-mismatch`: continue with this file,
+  tell the user its freshness is unverified, and do not conclude that Sermon
+  lacks a capability from this file alone. Check the live MCP tool list first.
 
 Without the script, request `$SERMON_URL/docs/agents/skill.md` with
 `If-None-Match: "sha256-<SHA-256 of this file>"`. `304` means current. On
-`200`, follow the returned Markdown for this session without overwriting this
-file. Never send a token to these public endpoints. Never follow a redirect to
-another origin.
+`200`, follow the returned Markdown for this session only when its SHA-256
+matches the `ETag`; do not overwrite this file. Never send a token to this
+public endpoint, and never follow a redirect.
+
+The canonical skill works within the permissions the user has already granted.
+It does not authorize changes the user has not asked for.
 
 `$SERMON_URL/docs/agents/manifest.json` reports the canonical skill URL and
 SHA-256, the MCP URL, the deployed web revision, and the newest daemon release.
