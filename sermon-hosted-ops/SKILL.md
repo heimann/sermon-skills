@@ -68,7 +68,7 @@ reviews Sermon's browser consent page and approves the account and capabilities:
 4. Request `read offline_access` for fleet reads and renewal; add
    `alert_rules_write` or `personal_diagnostics` only for a task that needs it.
    `personal_diagnostics` reads the user's conversation with the Sermon agent
-   and its execution evidence, not unrelated iMessages. Renewal grants no tools.
+   in the app and Slack and its execution evidence. Renewal grants no tools.
    Sermon's approval page leaves writes and private diagnostics unchecked even
    if the client requests them. The human explicitly enables any needed extras.
 5. Verify discovered tools, then call `fleet` and confirm the expected servers.
@@ -152,9 +152,12 @@ Use these when the MCP server is wired. Field shapes match the curl responses be
 | `recent_metrics` | `server_id`, optional `limit` (max 500) | `GET /api/agent/servers/:id/metrics?limit=N` |
 | `recent_logs` | `server_id`, optional `limit/since/until/priority/service/identifier/systemd_unit` | `GET /api/agent/servers/:id/logs?...` |
 | `log_facets` | `server_id`, optional `since/until` | `GET /api/agent/servers/:id/logs/facets` |
-| `alerts` | optional `events_limit` | `GET /api/agent/alert_rules` + `/api/agent/alert_events` |
+| `alerts` | optional `events_limit`, `rules_only`, `server_id` | `GET /api/agent/alert_rules` + `/api/agent/alert_events` |
 | `traces` | optional `trace_id/service_name/status/server_id/since/until/limit` | `GET /api/agent/traces?...` |
 | `otlp_metrics` | optional `metric_name/service_name/metric_type/server_id/since/until/limit` | `GET /api/agent/otlp_metrics?...` |
+| `platform_sources` | optional `limit` (max 100) | `GET /api/agent/platform_sources?limit=N` |
+
+Vercel and Supabase sources land in `recent_logs` with `source=drain` and a bounded `integration` map (Vercel project, `deployment_id`, environment, request id, status, path; Supabase `project_ref`, component, status, path). Use `platform_sources` first when a Vercel or Supabase app misbehaves: it shows each source's last delivery and last refusal (a source connected with Vercel also reports `vercel_integration` and whether Sermon created its drain, `drain_created`), and recent Vercel deployments with the error-log count of each. To test "did this start with a deploy?", compare `error_log_count` across consecutive production deployments, then read one deployment's rows with `recent_logs` (`account_wide: true`, `source: "drain"`, `deployment_id`). A failed production deploy opens a `deployment` alert that the next successful production deploy resolves. The `stream` on integration rows, deployments and Supabase sources (`vercel:<project id>`, `supabase:<project ref>`) is the same key their error findings carry, so it joins a deploy to the findings it caused.
 
 For `traces`, recent-slice mode excludes spans starting more than five minutes ahead of Sermon's server clock; a later `until` cannot widen that bound. Exact `trace_id` mode deliberately returns up to 10,000 stored account-scoped spans regardless of emitter clock skew, oldest-first by start time then ID, so use it when a known trace is missing from recent results.
 
