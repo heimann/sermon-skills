@@ -35,9 +35,15 @@ public endpoint, and never follow a redirect.
 The canonical skill works within the permissions the user has already granted.
 It does not authorize changes the user has not asked for.
 
-`$SERMON_URL/docs/agents/manifest.json` reports the canonical skill URL and
+`$SERMON_URL/docs/agents/manifest.json` reports each canonical skill's URL and
 SHA-256, the MCP URL, the deployed web revision, and the newest daemon release.
 It describes the deployment, not what any token may do.
+
+To audit how well one project is wired into Sermon - whether its telemetry
+arrives, whether its service identity, environment and deployed revision are
+set the way Sermon reads them - use the `sermon-instrumentation-audit` skill at
+`$SERMON_URL/docs/agents/skills/sermon-instrumentation-audit.md`, run inside
+that project's repository.
 
 ## Tool routing (read this after the freshness check)
 
@@ -156,6 +162,7 @@ Use these when the MCP server is wired. Field shapes match the curl responses be
 | `traces` | optional `trace_id/service_name/status/server_id/since/until/limit` | `GET /api/agent/traces?...` |
 | `otlp_metrics` | optional `metric_name/service_name/metric_type/server_id/since/until/limit` | `GET /api/agent/otlp_metrics?...` |
 | `platform_sources` | optional `limit` (max 100) | `GET /api/agent/platform_sources?limit=N` |
+| `services` | (none) | `GET /api/agent/services` |
 
 Vercel and Supabase sources land in `recent_logs` with `source=drain` and a bounded `integration` map (Vercel project, `deployment_id`, environment, request id, status, path; Supabase `project_ref`, component, status, path). Use `platform_sources` first when a Vercel or Supabase app misbehaves: it shows each source's last delivery and last refusal (a source connected with Vercel also reports `vercel_integration` and whether Sermon created its drain, `drain_created`), and recent Vercel deployments with the error-log count of each. To test "did this start with a deploy?", compare `error_log_count` across consecutive production deployments, then read one deployment's rows with `recent_logs` (`account_wide: true`, `source: "drain"`, `deployment_id`). A failed production deploy opens a `deployment` alert that the next successful production deploy resolves. The `stream` on integration rows, deployments and Supabase sources (`vercel:<project id>`, `supabase:<project ref>`) is the same key their error findings carry, so it joins a deploy to the findings it caused.
 
