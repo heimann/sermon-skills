@@ -1,6 +1,6 @@
 ---
 name: sermon-instrumentation-audit
-description: Audits how well one project is wired into Sermon - whether its telemetry arrives, whether its service identity, environment and deployed revision are set the way Sermon reads them, whether its logs and spans are shaped so error detection works, and whether its findings can be investigated against source. Use when asked how well a project uses Sermon, whether its logs or traces are landing and annotated correctly, why a service produces no findings or noisy ones, or before relying on Sermon for a service.
+description: Audits how well one project, or one monitored server, is wired into Sermon - whether its telemetry arrives, whether its service identity, environment and deployed revision are set the way Sermon reads them, whether its logs and spans are shaped so error detection works, and whether its findings can be investigated against source. In host mode it audits a server instead - the daemon, which units' logs arrive and at what priority, which services also send OTLP, and what alert coverage the host has. Use when asked how well a project or server uses Sermon, whether its logs or traces are landing and annotated correctly, why a service or host produces no findings or noisy ones, whether the Sermon daemon and the services on a server are set up properly, or before relying on Sermon for a service or host.
 ---
 
 # Sermon Instrumentation Audit
@@ -8,6 +8,10 @@ description: Audits how well one project is wired into Sermon - whether its tele
 Run this inside one project's repository. It answers a single question: if this
 service broke right now, would Sermon notice, name it correctly, and be able to
 investigate it?
+
+When the question is about a server rather than a project - "is the daemon on
+this box set up right", "are the services on it reporting properly" - use
+[Host mode](#host-mode) instead. It needs no repository.
 
 The audit is read-only. It reads the repository and Sermon, reports verdicts,
 and proposes edits. It does not apply them, and it never emits telemetry,
@@ -272,6 +276,15 @@ Also check that `trace_id` is set on log records emitted inside a span: it is
 what lets an investigation move from an error line to the request that produced
 it.
 
+**Logs that reach Sermon only through the host daemon** (journald, uploaded by
+an enrolled server) are judged differently: a line is an error only when its
+syslog priority is `err` (3) or worse, and its words do not count. A service
+that writes to stdout under systemd gets priority 6 (info) for every line, so
+none of its errors ever become findings. Fix it by prefixing each output line
+with the sd-daemon level (`<3>` for error, `<4>` for warning), which journald
+reads by default for `StandardOutput=journal` services, or by exporting logs
+over OTLP.
+
 ### 7. Spans are shaped so failures are detected
 
 **Status.** `status_code = error` always qualifies as a failure. An unset status
@@ -368,6 +381,118 @@ makes failures detectable outranks three that tidy attributes.
 
 Keep the evidence column to what you actually read: counts, names, a sample
 message shape. Do not restate the rules back to the operator.
+
+## Host mode
+
+Audits one enrolled server: whether the daemon is healthy, whether every service
+on the host is reporting, and whether a failure there would reach anyone. It
+reads only Sermon; it never runs a command on the host. If the host's services
+have repositories checked out locally, read their logging configuration for
+the fixes, but do not audit each service in full: recommend the repository
+audit for the ones that need it.
+
+Find the server with `fleet` and ask which one if the name is ambiguous. Then
+read:
+
+- `fleet`: online state, `daemon_version` against `latest_daemon_version`, and
+  `daemon_outdated`.
+- `latest_metrics`: `log_stats` (`seen`, `uploaded`, `dropped`), `daemon_self`
+  CPU and memory, disks, and the top processes with their systemd units. If
+  that sample has no processes or disks, read `recent_metrics` with `limit: 10`
+  and use the newest sample that has them; an empty sample is not a daemon
+  fault.
+- `log_facets`: lines per unit and per priority over 24 hours, and the
+  coverage window.
+- `recent_logs` with `server_id`, `service` set to one unit and `limit: 100`,
+  for each application unit: the message shape and its priorities.
+- `alerts` with `rules_only: true` and `server_id`, and `findings`, to see what
+  this host has actually produced.
+- `services`, for each unit's host stream (`host:<server id>:<identifier>`)
+  and whether the same service also has an `otlp:` stream.
+- `baseline_history`, newest revision only: what Sermon has learned is normal.
+
+### Host checks
+
+**Daemon.** `ok` when online, current, and `dropped` is 0. `degraded` when the
+daemon is outdated, reports dropped log lines, or its own CPU or memory is near
+the host's `daemon_cpu_high` or `daemon_rss_high` thresholds. `absent` when the
+server is offline or stale.
+
+**Log coverage.** Every unit that runs a service should appear in
+`log_facets`. Compare against the units in the top-process list: a service that
+runs but logs nothing to journald (PostgreSQL and nginx write to their own
+files by default) is invisible to Sermon, including its errors. Name each one
+and where it logs instead.
+
+**Log priority.** For each application unit, compare the priorities its lines
+arrive at with what the messages say. Host lines are errors only at priority 3
+or worse; words do not count. A unit whose `[error]` or `ERROR` lines arrive at
+priority 6 produces no error findings at all: `degraded`, with the
+sd-daemon-prefix fix from check 6 above. When reading a service's repository
+for the fix, check its production-only logger configuration too: a prefixing
+formatter is often wired there and nowhere else. Do not call a unit healthy because it
+has no error findings until its priorities are honest.
+
+**Log volume.** Name any unit that dominates the upload, and what its lines
+are. Routine request lines (`GET /health`, `Sent 200`) and, on the host that runs
+Sermon itself, its own ingest requests crowd the hosted window, which is
+sampled, without adding signal. `degraded` when one unit's routine lines are
+most of the host's volume.
+
+**Application telemetry.** For each application unit, whether its service
+also sends OTLP (`services` shows an `otlp:` stream). A journald-only service
+has no traces, no environment and no revision, so its findings cannot be pinned
+to a deployed commit. List these; each is a candidate for the repository audit.
+
+**Alert coverage.** The host's rules can watch CPU, memory, disk fill,
+staleness, daemon health and insert failures. No rule watches whether a
+systemd unit is running. A crash-looping unit is noticed only through the
+lines it and systemd log at priority 3 or worse, so a service whose own errors
+arrive at priority 6 can fail silently. Say which services that applies to.
+`degraded` when the standard host rules are missing or disabled.
+
+**Baseline.** Compare the newest baseline revision against the current sample.
+A claim that no longer matches - disk fill, memory band, which processes are
+the heavy ones - means anomaly detection is judging against the wrong normal.
+`degraded`, naming the stale claim and the current value.
+
+**Investigation readiness.** For each application service on the host, its
+`investigation_blocker` from `services`. Report the blockers; never approve
+anything.
+
+### Host report
+
+```
+## Sermon host audit: <server>
+
+Verdict: <ready | partial | not wired up>
+
+| Check | Verdict | Evidence |
+| --- | --- | --- |
+| Daemon | ok | v0.0.2 (latest), online, 0 dropped |
+| Log coverage | ... | ... |
+| Log priority | ... | ... |
+| Log volume | ... | ... |
+| Application telemetry | ... | ... |
+| Alert coverage | ... | ... |
+| Baseline | ... | ... |
+| Investigation readiness | ... | ... |
+
+## Services on this host
+
+| Unit | Lines/24h | Priorities | OTLP | Errors become findings |
+| --- | --- | --- | --- | --- |
+| ... | ... | ... | yes / no | yes / no, and why |
+
+## Fix first
+1. ...
+
+## Unverified
+- ...
+```
+
+The same verdict rules apply as in the repository report: one word per cell,
+and `degraded` or `absent` only for a defect you can name with its fix.
 
 ## Limits
 

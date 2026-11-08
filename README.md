@@ -5,7 +5,7 @@ Agent skills for using Sermon.
 ## Skills
 
 - `sermon-hosted-ops` - connect an agent to Sermon's hosted MCP and inspect fleet health, metrics, logs, traces, alert rules and events, and daemon version status through `sermon.fyi`.
-- `sermon-instrumentation-audit` - run inside one project's repository to audit how well it is wired into Sermon: arrival, service identity, environment, deployed revision, log and span shape, and investigation readiness.
+- `sermon-instrumentation-audit` - run inside one project's repository to audit how well it is wired into Sermon: arrival, service identity, environment, deployed revision, log and span shape, and investigation readiness. Host mode audits an enrolled server instead: the daemon, which units' logs arrive and at what priority, which services also send OTLP, alert coverage and the learned baseline.
 
 Each skill is served at `https://sermon.fyi/docs/agents/skills/<name>.md` from `docs/skills/<name>/SKILL.md` in `heimann/sermon`; `sermon-hosted-ops` is also served at its original `https://sermon.fyi/docs/agents/skill.md`. `heimann/sermon-skills` mirrors this directory for `npx skills` installs.
 
