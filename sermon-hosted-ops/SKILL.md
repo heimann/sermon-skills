@@ -248,7 +248,7 @@ Response shape:
 
 ### Alert rules and events
 
-Track A static alerts ship with the daemon: every enrolled server gets five default rules (`stale`, `cpu_high_sustained`, `mem_high`, `disk_high`, `daemon_outdated`) auto-created on enrollment. Rules are configured via this API, never via a web rule-builder UI - the `/alerts/rules` page on sermon.fyi is read-only.
+Static alerts ship with the daemon: every enrolled server gets five default rules (`stale`, `cpu_high_sustained`, `mem_high`, `disk_high`, `daemon_outdated`) auto-created on enrollment. Rules are configured through this API or the MCP rule tools; the `/alerts/rules` page on sermon.fyi is read-only.
 
 #### List rules
 
@@ -281,7 +281,7 @@ Response:
 }
 ```
 
-Available metrics: `cpu_percent`, `mem_percent`, `disk_max_fill_percent`, `staleness_seconds`, `daemon_outdated_for_seconds`. Available ops: `gt`, `gte`, `lt`, `lte`, `eq`, `neq`. `duration_seconds: 0` evaluates the latest sample only; `> 0` evaluates the average over the window.
+Available metrics: `cpu_percent`, `mem_percent`, `disk_max_fill_percent`, `staleness_seconds`, `daemon_outdated_for_seconds`. Available ops: `gt`, `gte`, `lt`, `lte`, `eq`, `neq`. `duration_seconds: 0` evaluates the latest sample only; `> 0` evaluates the average over the window, up to 86400 (one day).
 
 #### Create a rule
 
