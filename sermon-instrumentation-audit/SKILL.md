@@ -14,8 +14,8 @@ this box set up right", "are the services on it reporting properly" - use
 [Host mode](#host-mode) instead. It needs no repository.
 
 The audit is read-only. It reads the repository and Sermon, reports verdicts,
-and proposes edits. It does not apply them, and it never emits telemetry,
-creates an alert rule, or triggers an error to see what happens.
+and proposes edits. It does not apply them, and it never emits telemetry or
+triggers an error to see what happens.
 
 ## Freshness check (before choosing tools)
 
@@ -223,7 +223,7 @@ environment (for example `production`), since deployments are matched by that
 name, and only ones with a `success` status count. The deploy-workflow
 fallback needs exactly one active workflow that looks like a deploy (`deploy`
 in its name, or a `deploy*.yml` or `cd.yml` path), and only uses a run not
-triggered by a pull request in which every job and step succeeded.
+triggered by a pull request in which every job succeeded and no step failed.
 
 Fix, in order of preference: report the full SHA as a resource attribute; or add
 `environment:` to the deploy job. A service that does neither can still be
@@ -444,12 +444,12 @@ also sends OTLP (`services` shows an `otlp:` stream). A journald-only service
 has no traces, no environment and no revision, so its findings cannot be pinned
 to a deployed commit. List these; each is a candidate for the repository audit.
 
-**Alert coverage.** The host's rules can watch CPU, memory, disk fill,
-staleness, daemon health and insert failures. No rule watches whether a
+**Alert coverage.** Sermon's checks on a host can watch CPU, memory, disk fill,
+staleness, daemon health and insert failures. No check watches whether a
 systemd unit is running. A crash-looping unit is noticed only through the
 lines it and systemd log at priority 3 or worse, so a service whose own errors
 arrive at priority 6 can fail silently. Say which services that applies to.
-`degraded` when the standard host rules are missing or disabled.
+`degraded` when the host has no check on staleness or disk fill.
 
 **Baseline.** Compare the newest baseline revision against the current sample.
 A claim that no longer matches - disk fill, memory band, which processes are
@@ -506,5 +506,5 @@ and `degraded` or `absent` only for a defect you can name with its fix.
   rather than blaming the instrumentation.
 - Sampling: hosted logs are sampled, so counts read from `recent_logs` are
   evidence of arrival, not a volume measurement.
-- This audit judges instrumentation. It does not judge whether the alert rules,
+- This audit judges instrumentation. It does not judge whether the host checks,
   mutes and expected errors on top of it match what the team wants paged.

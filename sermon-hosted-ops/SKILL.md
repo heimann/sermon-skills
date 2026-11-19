@@ -1,6 +1,6 @@
 ---
 name: sermon-hosted-ops
-description: Uses Sermon's hosted MCP to inspect fleet health, metrics, logs, traces, alerts, and personal diagnostics or manage alert rules. Use when asked to connect an agent to Sermon, check a host or fleet, investigate an alert, or configure alerting; includes native OAuth onboarding and a Bearer-token fallback.
+description: Uses Sermon's hosted MCP to inspect fleet health, metrics, logs, traces, alerts, what Sermon checks on each host, and personal diagnostics. Use when asked to connect an agent to Sermon, check a host or fleet, or investigate an alert; includes native OAuth onboarding and a Bearer-token fallback.
 ---
 
 # Sermon Hosted Ops
@@ -145,7 +145,7 @@ Client logout clears local credentials; server-side access ends only after the
 Sermon grant/token is revoked. Never blindly replay a write after an unknown
 outcome.
 
-The hosted read path can answer questions about enrolled servers, online/stale state, latest CPU/memory, recent metric windows, disks, process snapshots included in metric samples, recent hosted logs, alert rules/events, distributed traces, and OTLP application metrics. It cannot yet answer posture, SSH, firewall, deploy, or package-update questions unless the user provides that data separately.
+The hosted read path can answer questions about enrolled servers, online/stale state, latest CPU/memory, recent metric windows, disks, process snapshots included in metric samples, recent hosted logs, host checks and alert events, distributed traces, and OTLP application metrics. It cannot yet answer posture, SSH, firewall, deploy, or package-update questions unless the user provides that data separately.
 
 ## MCP tool reference (preferred surface)
 
@@ -162,7 +162,7 @@ Use these when the MCP server is wired. Field shapes match the curl responses be
 | `traces` | optional `trace_id/service_name/status/server_id/since/until/limit` | `GET /api/agent/traces?...` |
 | `otlp_metrics` | optional `metric_name/service_name/metric_type/server_id/since/until/limit` | `GET /api/agent/otlp_metrics?...` |
 | `platform_sources` | optional `limit` (max 100) | `GET /api/agent/platform_sources?limit=N` |
-| `services` | (none) | `GET /api/agent/services` |
+| `services` | `listing` (`listed` default, `pending`, `hidden`, `all`) | `GET /api/agent/services?listing=` |
 
 Vercel and Supabase sources land in `recent_logs` with `source=drain` and a bounded `integration` map (Vercel project, `deployment_id`, environment, request id, status, path; Supabase `project_ref`, component, status, path). Use `platform_sources` first when a Vercel or Supabase app misbehaves: it shows each source's last delivery and last refusal (a source connected with Vercel also reports `vercel_integration` and whether Sermon created its drain, `drain_created`), and recent Vercel deployments with the error-log count of each. To test "did this start with a deploy?", compare `error_log_count` across consecutive production deployments, then read one deployment's rows with `recent_logs` (`account_wide: true`, `source: "drain"`, `deployment_id`). A failed production deploy opens a `deployment` alert that the next successful production deploy resolves. The `stream` on integration rows, deployments and Supabase sources (`vercel:<project id>`, `supabase:<project ref>`) is the same key their error findings carry, so it joins a deploy to the findings it caused.
 
@@ -194,7 +194,7 @@ browser approval, and a successful read verify access; installing prose does not
 - Prefer reading it from `SERMON_AGENT_TOKEN`; fall back to `~/.sermon/agent-token`.
 - If a token is pasted in chat, tell the user to revoke it after the task.
 - Treat tokens as sensitive. Their authority depends on their scopes and may
-  include alert-rule writes.
+  include writes.
 
 ## API calls (curl fallback path)
 
@@ -246,11 +246,11 @@ Response shape:
 }
 ```
 
-### Alert rules and events
+### Host checks and alert events
 
-Static alerts ship with the daemon: every enrolled server gets five default rules (`stale`, `cpu_high_sustained`, `mem_high`, `disk_high`, `daemon_outdated`) auto-created on enrollment. Rules are configured through this API or the MCP rule tools; the `/alerts/rules` page on sermon.fyi is read-only.
+Sermon keeps checks on every host: a threshold on one host number. A new host starts with four (`stale`, `cpu_high_sustained`, `mem_high`, `disk_high`), and Sermon's own agent adds, tunes and retires them. A check crossing its threshold is a page candidate Sermon's agent decides on, like every other alert. Agents read checks; they cannot change them. To change what Sermon checks ("always tell me when db-1's disk passes 90%"), the person tells Sermon in the discussion, and it is kept as their instruction. Each host's page in Your system on sermon.fyi shows its checks.
 
-#### List rules
+#### List checks
 
 ```bash
 curl -fsSL "$SERMON_URL/api/agent/alert_rules" \
@@ -267,6 +267,8 @@ Response:
       "server_id": "uuid",
       "server_name": "contabo-ny-1",
       "name": "cpu_high_sustained",
+      "watches": "CPU above 90% for 5 minutes",
+      "instruction": null,
       "metric": "cpu_percent",
       "op": "gt",
       "threshold": 90.0,
@@ -282,43 +284,6 @@ Response:
 ```
 
 Available metrics: `cpu_percent`, `mem_percent`, `disk_max_fill_percent`, `staleness_seconds`, `daemon_outdated_for_seconds`. Available ops: `gt`, `gte`, `lt`, `lte`, `eq`, `neq`. `duration_seconds: 0` evaluates the latest sample only; `> 0` evaluates the average over the window, up to 86400 (one day).
-
-#### Create a rule
-
-```bash
-curl -fsSL "$SERMON_URL/api/agent/alert_rules" \
-  -X POST \
-  -H "Authorization: Bearer $SERMON_AGENT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "server_id": "<uuid>",
-    "name": "swap_pressure",
-    "metric": "mem_percent",
-    "op": "gt",
-    "threshold": 95.0,
-    "duration_seconds": 600,
-    "notify_email": "ops@example.com",
-    "notify_on_resolve": false
-  }'
-```
-
-Returns `201` with the created rule, or `422` with `details` shaped per Ecto changeset errors.
-
-#### Update / disable / delete
-
-```bash
-# Lower the CPU threshold or disable a noisy rule:
-curl -fsSL "$SERMON_URL/api/agent/alert_rules/$RULE_ID" \
-  -X PATCH \
-  -H "Authorization: Bearer $SERMON_AGENT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"threshold": 80.0, "enabled": false}'
-
-# Remove a rule entirely:
-curl -fsSL "$SERMON_URL/api/agent/alert_rules/$RULE_ID" \
-  -X DELETE \
-  -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
-```
 
 #### Recent fired events
 
@@ -497,7 +462,7 @@ Process snapshots are intentionally narrow:
 10. Use metric `log_stats` to say when hosted logs are sampled/incomplete. If `dropped > 0`, explicitly say hosted logs are partial.
 11. Ground every conclusion in returned fields. Include timestamps, sample counts, log counts, and any filters used.
 12. State API limits explicitly when relevant: posture is not available through this API yet; hosted logs are recent/sampled/capped and not full journal search.
-13. For alert-related questions: list rules first to show what's being watched, fetch recent events to surface what has fired, and follow the alert's evidence window (when present) into metrics and logs queries to ground the investigation.
+13. For alert-related questions: list checks first to show what's being watched, fetch recent events to surface what has fired, and follow the alert's evidence window (when present) into metrics and logs queries to ground the investigation.
 14. When the user pastes a Sermon alert email or its Copy-to-agent block, treat the embedded `Server`, `Rule`, and `Window` lines as the starting point. Run the suggested API calls in the email body verbatim where given.
 
 ## How to reason about the data
