@@ -72,10 +72,11 @@ reviews Sermon's browser consent page and approves the account and capabilities:
 2. Add a **personal** remote HTTP configuration without an Authorization header.
 3. Start the client's native OAuth flow. Never request a copied token or code.
 4. Request `read offline_access` for fleet reads and renewal; add
-   `alert_rules_write` or `personal_diagnostics` only for a task that needs it.
+   `alert_rules_write` (ask Sermon for changes with `message_sermon`) or
+   `personal_diagnostics` only for a task that needs it.
    `personal_diagnostics` reads the user's conversation with the Sermon agent
    in the app and Slack and its execution evidence. Renewal grants no tools.
-   Sermon's approval page leaves writes and private diagnostics unchecked even
+   Sermon's approval page leaves changes and private diagnostics unchecked even
    if the client requests them. The human explicitly enables any needed extras.
 5. Verify discovered tools, then call `fleet` and confirm the expected servers.
    For application-only telemetry, use `recent_logs` with `account_wide: true`
@@ -248,7 +249,30 @@ Response shape:
 
 ### Host checks and alert events
 
-Sermon keeps checks on every host: a threshold on one host number. A new host starts with four (`stale`, `cpu_high_sustained`, `mem_high`, `disk_high`), and Sermon's own agent adds, tunes and retires them. A check crossing its threshold is a page candidate Sermon's agent decides on, like every other alert. Agents read checks; they cannot change them. To change what Sermon checks ("always tell me when db-1's disk passes 90%"), the person tells Sermon in the discussion, and it is kept as their instruction. Each host's page in Your system on sermon.fyi shows its checks.
+Sermon keeps checks on every host: a threshold on one host number. A new host starts with four (`stale`, `cpu_high_sustained`, `mem_high`, `disk_high`), and Sermon's own agent adds, tunes and retires them. A check crossing its threshold is a page candidate Sermon's agent decides on, like every other alert. Agents read checks; they cannot change them. To change what Sermon checks ("always tell me when db-1's disk passes 90%"), the person tells Sermon in the discussion, or you ask Sermon for them with `message_sermon`, and once a person accepts it, it is kept as their instruction. Each host's page in Your system on sermon.fyi shows its checks.
+
+### Asking Sermon for a change
+
+Agents change nothing in Sermon directly. To mute or resolve a finding, mark an
+error expected, or change what Sermon checks, call `message_sermon` (needs
+`alert_rules_write`) with what the person asked for, in plain words: "the
+bookmark_id errors on api are expected, clients send bad ids". Only ask for a
+change the person explicitly asked for.
+
+- It is posted in the account's discussion on sermon.fyi as the person who
+  approved the connection, marked with your connection's name, and everyone in
+  the account reads it. Pass `about` (`incident:<id>` or `finding:<id>`) to post
+  in that incident's or finding's discussion.
+- Sermon answers under your connection's permissions. A change it proposes is
+  a card that waits for a person to accept it in the discussion: `proposals`
+  gives each one's `title` and `state`. Tell the person to accept it at
+  `discussion_url`; never say a pending change is made.
+- The call waits up to `wait_seconds` (default 30, at most 50). While `status`
+  is `working`, call again with only `message_id` to read the reply.
+
+```json
+{"name":"message_sermon","arguments":{"body":"The bookmark_id errors on api are expected, clients send bad ids","wait_seconds":40}}
+```
 
 #### List checks
 
