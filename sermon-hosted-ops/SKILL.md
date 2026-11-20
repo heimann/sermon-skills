@@ -323,7 +323,7 @@ curl -fsSL "$SERMON_URL/api/agent/alert_events/$EVENT_ID" \
   -H "Authorization: Bearer $SERMON_AGENT_TOKEN"
 ```
 
-The single-event response also includes a `copy_to_agent` field: a markdown brief identical to what gets emailed and what the `/alerts` LiveView Copy button renders. Quote that block back in chat to start an investigation.
+The single-event response also includes a `copy_to_agent` field: a markdown brief identical to what gets emailed and what the finding page's Copy button renders. Quote that block back in chat to start an investigation.
 
 #### When the user pastes a Sermon alert email
 
