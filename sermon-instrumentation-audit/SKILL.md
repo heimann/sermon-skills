@@ -52,8 +52,8 @@ You need two things:
    logging call sites. Never read `.env` files; check which keys a loader
    expects and report only whether a named setting is present.
 2. **Sermon read access**, to see what actually arrived. Prefer MCP tools
-   (`recent_logs`, `traces`, `otlp_metrics`, `platform_sources`, `alerts`,
-   `findings`). If no Sermon tools are wired up, follow the
+   (`services`, `recent_logs`, `traces`, `otlp_metrics`, `platform_sources`,
+   `alerts`, `findings`). If no Sermon tools are wired up, follow the
    `sermon-hosted-ops` skill to connect, then come back. Without Sermon access
    you can still run Step 1: give each check the verdict its repository
    evidence supports and list the half you could not read under Unverified.
@@ -90,11 +90,12 @@ finding, not a dead end.
 
 Read Sermon for the same service. Useful calls:
 
-- `services`, if the tool list offers it. One row per service Sermon has
-  discovered: its name and aliases, and each runtime's stream, signals,
-  environment, reported revision (and whether it is a full SHA), readiness
-  status and last delivery, plus the service's investigation blocker. This is
-  the only read of the environment and revision attributes, so start here.
+- `services` (pass `listing: "all"` if the service is not on the roster). One
+  row per service Sermon has discovered: its name and aliases, and each
+  runtime's stream, signals, environment, reported revision (and whether it is
+  a full SHA), readiness status and last delivery, plus the service's
+  investigation blocker. This is the only read of the environment and revision
+  attributes, so start here.
 - `recent_logs` with `account_wide: true`, `source: "otlp"`, `limit: 100`.
   Account-wide is the only way to reach app logs whose `host.name` did not
   resolve to an enrolled server. For Vercel and generic drains make a second
@@ -108,14 +109,16 @@ Read Sermon for the same service. Useful calls:
 - `otlp_metrics` with `service_name`.
 - `platform_sources` for a Vercel or Supabase source: when it last delivered,
   and why its last delivery was refused if one was.
-- `alerts` and `findings`, to see what this service has actually produced.
+- `alerts` and `findings` (`status: "all"`), to see what this service has
+  actually produced, and `list_cloudwatch_expected_errors` for notes that stop
+  Sermon paging on an error kind in one of its streams.
 
 **Resource attributes are not returned on rows.** No log or span read returns
 the `resource` map. `service.name` is visible as `service_name`, and Vercel
 integration rows carry `integration.environment` and `deployment_id`; the
 environment and revision attributes are otherwise readable only through
-`services`. Without that tool, verify them in the repository only, and mark the
-arrival half `unverified` rather than claiming they are set or missing.
+`services`. If it cannot be read, verify them in the repository only, and mark
+the arrival half `unverified` rather than claiming they are set or missing.
 
 An empty read is not an authentication failure, and it is not proof the service
 is silent: check the window you asked for and the filters you passed first.
@@ -327,9 +330,11 @@ label the environment so production measurement stays honest.
 ### 9. Findings can be investigated against source
 
 For Sermon to read this project's code when investigating one of its findings,
-three operator approvals must hold, in this order: GitHub connected, a
-repository link in `connected` state for the service, and source sharing
-approved. The first missing one is the blocker to report; `services` names it.
+the service must be on the roster and three operator approvals must hold, in
+this order: GitHub connected, a repository link in `connected` state for the
+service, and source sharing approved. The first missing one is the blocker to
+report; `services` names it (`review_service`, `connect_github`,
+`review_repository`, `approve_source_sharing`).
 Separately, each runtime reports whether it has an environment and a telemetry
 revision (`environment_missing`, `revision_missing`, or
 `revision_check_required` when both are present, meaning the commit is checked
@@ -415,8 +420,8 @@ read:
 
 **Daemon.** `ok` when online, current, and `dropped` is 0. `degraded` when the
 daemon is outdated, reports dropped log lines, or its own CPU or memory is near
-the host's `daemon_cpu_high` or `daemon_rss_high` thresholds. `absent` when the
-server is offline or stale.
+a check the host has on `daemon_cpu_percent` or `daemon_rss_kb`. `absent` when
+the server is offline or stale.
 
 **Log coverage.** Every unit that runs a service should appear in
 `log_facets`. Compare against the units in the top-process list: a service that
@@ -444,12 +449,16 @@ also sends OTLP (`services` shows an `otlp:` stream). A journald-only service
 has no traces, no environment and no revision, so its findings cannot be pinned
 to a deployed commit. List these; each is a candidate for the repository audit.
 
-**Alert coverage.** Sermon's checks on a host can watch CPU, memory, disk fill,
-staleness, daemon health and insert failures. No check watches whether a
+**Alert coverage.** Sermon manages each host's checks itself: they can watch
+CPU, memory, disk fill, staleness, an outdated daemon, the daemon's own CPU,
+memory and database size, and insert failures. No check watches whether a
 systemd unit is running. A crash-looping unit is noticed only through the
 lines it and systemd log at priority 3 or worse, so a service whose own errors
 arrive at priority 6 can fail silently. Say which services that applies to.
-`degraded` when the host has no check on staleness or disk fill.
+`degraded` when the host has no enabled check on staleness or disk fill. The
+fix is not an edit: the person tells Sermon what to check ("always tell me
+when db-1's disk passes 90%"), in the discussion or by asking you to send it
+with `message_sermon`.
 
 **Baseline.** Compare the newest baseline revision against the current sample.
 A claim that no longer matches - disk fill, memory band, which processes are
@@ -496,14 +505,11 @@ and `degraded` or `absent` only for a defect you can name with its fix.
 
 ## Limits
 
-- Without the `services` tool, checks 4, 5 and 9 are repository-side only.
-  It is offered only to accounts with code investigations rolled out.
-- Error findings from log paths other than CloudWatch, persistent trace-error
-  findings, and consented source investigations are each rolled out per
-  account. Account feature state is not readable with an ordinary token, so a
-  service can pass this audit and still produce no findings. When findings are
-  absent despite well-shaped telemetry, say that rollout state is unverified
-  rather than blaming the instrumentation.
+- Without Sermon access, checks 4, 5 and 9 are repository-side only.
+- Well-shaped telemetry can still produce no open findings: a muted finding,
+  one Sermon closed (`closed_reason` in `findings`), or an expected-error note
+  (`list_cloudwatch_expected_errors`) each explain silence. Check those before
+  blaming the instrumentation.
 - Sampling: hosted logs are sampled, so counts read from `recent_logs` are
   evidence of arrival, not a volume measurement.
 - This audit judges instrumentation. It does not judge whether the host checks,
