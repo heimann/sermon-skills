@@ -145,7 +145,7 @@ Client logout clears local credentials; server-side access ends only after the
 Sermon grant/token is revoked. Never blindly replay a write after an unknown
 outcome.
 
-The hosted read path can answer questions about enrolled servers, online/stale state, latest CPU/memory, recent metric windows, disks, process snapshots included in metric samples, recent hosted logs, host checks, alert events and findings, distributed traces, OTLP application metrics, Vercel deployments, and the environment and revision each service reports. It cannot answer posture, SSH, firewall, or package-update questions unless the user provides that data separately.
+The hosted read path can answer questions about enrolled servers, online/stale state, latest CPU/memory, recent metric windows, disks, process snapshots included in metric samples, recent hosted logs, host checks, alert events and findings, incidents with their fixes and pull requests, distributed traces, OTLP application metrics, deploys (a linked repository's deploy-workflow runs with Sermon's check of each, and Vercel production deployments), and the environment and revision each service reports. It cannot answer posture, SSH, firewall, or package-update questions unless the user provides that data separately.
 
 ## MCP tool reference (preferred surface)
 
@@ -160,9 +160,11 @@ Use these when the MCP server is wired. Field shapes match the curl responses be
 | `log_facets` | `server_id`, optional `since/until` | `GET /api/agent/servers/:id/logs/facets` |
 | `alerts` | optional `events_limit` (default 50, max 500), `rules_only`, `server_id` (checks on one host), `event_id` (one event in full), `occurrences_cursor` | `GET /api/agent/alert_rules` + `/api/agent/alert_events` |
 | `findings` | optional `status` (`open` default, `resolved`, `all`), `limit` (max 100), `cursor` | (MCP only) |
+| `incidents` | optional `days` (default 7, max 30) | (MCP only) |
 | `traces` | optional `trace_id/service_name/status/server_id/since/until/limit` | `GET /api/agent/traces?...` |
 | `otlp_metrics` | optional `metric_name/service_name/metric_type/server_id/since/until/limit` | `GET /api/agent/otlp_metrics?...` |
 | `platform_sources` | optional `limit` (max 100) | `GET /api/agent/platform_sources?limit=N` |
+| `deploys` | optional `hours` (default 24, max 720) | (MCP only) |
 | `services` | optional `listing` (`listed` default, `pending`, `hidden`, `all`) | `GET /api/agent/services?listing=` |
 | `baseline_history` | `server_id`, optional `before_version` | (MCP only) |
 | `query_host_logs` | `server_id`, `request_key` (UUID), `filters` (`since`, `until`, ...), optional `wait_ms` | (MCP only) |
